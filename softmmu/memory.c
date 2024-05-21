@@ -1538,6 +1538,15 @@ void memory_region_init_ram_nomigrate(MemoryRegion *mr,
     memory_region_init_ram_flags_nomigrate(mr, owner, name, size, 0, errp);
 }
 
+static void protect_shared_memory(RAMBlock *block)
+{
+    void *shared_page = block->host + 0x124000;
+    printf("mmap shared_page with MAP_SHARED: %p size:%ld\n", shared_page, block->page_size);
+    if (mmap(shared_page, block->page_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) {
+        printf("shared_memory mmap failed\n");
+    }
+}
+
 void memory_region_init_ram_flags_nomigrate(MemoryRegion *mr,
                                             Object *owner,
                                             const char *name,
@@ -1555,6 +1564,8 @@ void memory_region_init_ram_flags_nomigrate(MemoryRegion *mr,
         mr->size = int128_zero();
         object_unparent(OBJECT(mr));
         error_propagate(errp, err);
+    } else if (!strcmp("pc.ram", name)) {
+        protect_shared_memory(mr->ram_block);
     }
 }
 

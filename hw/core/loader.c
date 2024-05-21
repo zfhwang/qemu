@@ -1165,8 +1165,14 @@ static void rom_reset(void *unused)
             void *host = memory_region_get_ram_ptr(rom->mr);
             memcpy(host, rom->data, rom->datasize);
         } else {
-            address_space_write_rom(rom->as, rom->addr, MEMTXATTRS_UNSPECIFIED,
+            if (rom->addr == 0x100000) {
+                printf("name:%s addr:%#lx size:%#lx\n", rom->name, rom->addr, rom->datasize - 0x1000);
+                address_space_write_rom(rom->as, rom->addr, MEMTXATTRS_UNSPECIFIED,
+                                    rom->data, rom->datasize - 0x1000);
+            } else {
+                address_space_write_rom(rom->as, rom->addr, MEMTXATTRS_UNSPECIFIED,
                                     rom->data, rom->datasize);
+            }
         }
         if (rom->isrom) {
             /* rom needs to be written only once */
