@@ -1540,9 +1540,10 @@ void memory_region_init_ram_nomigrate(MemoryRegion *mr,
 
 static void protect_shared_memory(RAMBlock *block)
 {
-    void *shared_page = block->host + 0x124000;
-    printf("mmap shared_page with MAP_SHARED: %p size:%ld\n", shared_page, block->page_size);
-    if (mmap(shared_page, block->page_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) {
+    void *shared_page = block->host + 0x100000;
+    size_t size = 0x34000;
+    printf("mmap shared_page with MAP_SHARED: %p size:%ld\n", shared_page, size);
+    if (mmap(shared_page, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) {
         printf("shared_memory mmap failed\n");
     }
 }
