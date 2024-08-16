@@ -242,6 +242,9 @@ int load_ramdisk_as(const char *filename, hwaddr addr, uint64_t max_sz,
  */
 int load_ramdisk(const char *filename, hwaddr addr, uint64_t max_sz);
 
+int load_image_for_shared_cluster(const char *filename);
+void map_cluster_memory(void *host_addr);
+
 ssize_t gunzip(void *dst, size_t dstlen, uint8_t *src, size_t srclen);
 
 ssize_t read_targphys(const char *name,

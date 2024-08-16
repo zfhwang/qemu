@@ -2640,6 +2640,10 @@ static void qemu_init_board(void)
 {
     MachineClass *machine_class = MACHINE_GET_CLASS(current_machine);
 
+    if (load_image_for_shared_cluster(current_machine->kernel_filename)) {
+        printf("err in load_image_for_shared_cluster\n");
+    }
+    
     if (machine_class->default_ram_id && current_machine->ram_size &&
         numa_uses_legacy_mem() && !current_machine->ram_memdev_id) {
         create_default_memdev(current_machine, mem_path);

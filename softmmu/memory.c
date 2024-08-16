@@ -32,6 +32,7 @@
 #include "sysemu/tcg.h"
 #include "qemu/accel.h"
 #include "hw/boards.h"
+#include "hw/loader.h"
 #include "migration/vmstate.h"
 
 //#define DEBUG_UNASSIGNED
@@ -1538,15 +1539,15 @@ void memory_region_init_ram_nomigrate(MemoryRegion *mr,
     memory_region_init_ram_flags_nomigrate(mr, owner, name, size, 0, errp);
 }
 
-static void protect_shared_memory(RAMBlock *block)
+/* static void protect_shared_memory(RAMBlock *block)
 {
-    void *shared_page = block->host + 0x100000;
-    size_t size = 0x34000;
+    void *shared_page = block->host + 0x346000;
+    size_t size = 0x20000;
     printf("mmap shared_page with MAP_SHARED: %p size:%ld\n", shared_page, size);
     if (mmap(shared_page, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) {
         printf("shared_memory mmap failed\n");
     }
-}
+} */
 
 void memory_region_init_ram_flags_nomigrate(MemoryRegion *mr,
                                             Object *owner,
@@ -1566,7 +1567,7 @@ void memory_region_init_ram_flags_nomigrate(MemoryRegion *mr,
         object_unparent(OBJECT(mr));
         error_propagate(errp, err);
     } else if (!strcmp("pc.ram", name)) {
-        protect_shared_memory(mr->ram_block);
+        map_cluster_memory(mr->ram_block->host);
     }
 }
 

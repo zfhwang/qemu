@@ -200,6 +200,16 @@ static QemuMutex kml_slots_lock;
 #define kvm_slots_lock()    qemu_mutex_lock(&kml_slots_lock)
 #define kvm_slots_unlock()  qemu_mutex_unlock(&kml_slots_lock)
 
+int kvm_map_shared_clusters(struct kvm_shared_cluster_list *cluster_list)
+{
+    int ret;
+    printf("kvm map shared clusters\n");
+    ret = kvm_vm_ioctl(kvm_state, KVM_MAP_SHARED_CLUSTERS, cluster_list);
+    if (ret < 0)
+        fprintf(stderr, "ioctl(KVM_MAP_SHARED_CLUSTERS) failed: %d\n", ret);
+    return ret;
+}
+
 static void kvm_slot_init_dirty_bitmap(KVMSlot *mem);
 
 static inline void kvm_resample_fd_remove(int gsi)

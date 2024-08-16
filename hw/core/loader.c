@@ -62,6 +62,7 @@
 #include "hw/boards.h"
 #include "qemu/cutils.h"
 #include "sysemu/runstate.h"
+#include "sysemu/kvm.h"
 
 #include <zlib.h>
 
@@ -838,6 +839,209 @@ int load_image_gzipped(const char *filename, hwaddr addr, uint64_t max_sz)
 }
 
 /*
+ * Shared Cluster
+ */
+
+typedef struct SharedCluster SharedCluster;
+typedef struct ClusterSection ClusterSection;
+struct ClusterSection {
+    unsigned int segment_id;
+    void *sec_addr;
+    unsigned int pagenum;
+};
+struct SharedCluster {
+    char name[256];
+    void *gpa;
+    void *hva;
+    size_t size;
+    ClusterSection sections[2];
+    QTAILQ_ENTRY(SharedCluster) next;
+};
+QTAILQ_HEAD(, SharedCluster) clusters = QTAILQ_HEAD_INITIALIZER(clusters);
+unsigned int shared_cluster_count = 0;
+
+static void print_clusters(void) {
+    SharedCluster *cluster;
+
+    QTAILQ_FOREACH(cluster, &clusters, next) {
+        printf("Cluster name: %s\n", cluster->name);
+        printf("Cluster GPA: %p\n", cluster->gpa);
+        printf("Cluster HVA: %p\n", cluster->hva);
+        printf("Cluster size: %#lx\n", cluster->size);
+
+        if (cluster->sections[0].pagenum != 0) {
+            printf("Cluster section .text:\n");
+            printf("  Segment ID: %u\n", cluster->sections[0].segment_id);
+            printf("  Section address: %p\n", cluster->sections[0].sec_addr);
+            printf("  Page number: %u\n", cluster->sections[0].pagenum);
+        }
+        if (cluster->sections[1].pagenum != 0) {
+            printf("Cluster section .rodata:\n");
+            printf("  Segment ID: %u\n", cluster->sections[1].segment_id);
+            printf("  Section address: %p\n", cluster->sections[1].sec_addr);
+            printf("  Page number: %u\n", cluster->sections[1].pagenum);
+        }
+
+        printf("\n");
+    }
+}
+
+static int section_shared(int segment_id)
+{
+    SharedCluster *cluster;
+
+    QTAILQ_FOREACH(cluster, &clusters, next) {
+        if ((cluster->sections[0].pagenum && cluster->sections[0].segment_id == segment_id) || 
+            (cluster->sections[1].pagenum && cluster->sections[1].segment_id == segment_id))
+            return 1;
+    }
+    return 0;
+}
+
+int load_image_for_shared_cluster(const char *filename)
+{
+    int ret = ELF_LOAD_FAILED, fd, i;
+    uint8_t e_ident[EI_NIDENT];
+    struct elf32_hdr ehdr;
+
+    g_autofree struct elf32_phdr *phdr = NULL;
+    g_autofree struct elf32_shdr *shdr = NULL;
+    g_autofree char *strtab = NULL;
+    SharedCluster *cluster = NULL;
+    ClusterSection *section = NULL;
+    unsigned long cluster_id, segment_id, cur_id = -1;
+    unsigned long sec_addr;
+    char section_type[16];
+    struct elf32_phdr *ph;
+
+    fd = open(filename, O_RDONLY | O_BINARY);
+    if (fd < 0) {
+        perror(filename);
+        return -1;
+    }
+    if (read(fd, e_ident, sizeof(e_ident)) != sizeof(e_ident))
+        goto out_fd;
+    
+    if (e_ident[0] != ELFMAG0 ||
+        e_ident[1] != ELFMAG1 ||
+        e_ident[2] != ELFMAG2 ||
+        e_ident[3] != ELFMAG3) {
+        ret = ELF_LOAD_NOT_ELF;
+        goto out_fd;
+    }
+
+    // Read the ELF header
+    lseek(fd, 0, SEEK_SET);
+    if (read(fd, &ehdr, sizeof(ehdr)) != sizeof(ehdr))
+        goto out_fd;
+
+    // Read the program header table
+    phdr = load_at(fd, ehdr.e_phoff, sizeof(struct elf32_phdr) * ehdr.e_phnum);
+    if (!phdr)
+        goto out_fd;
+    
+    // Read the section header table
+    shdr = load_at(fd, ehdr.e_shoff, sizeof(struct elf32_shdr) * ehdr.e_shnum);
+    if (!shdr)
+        goto out_fd;
+
+    // Read the section header string table
+    strtab = load_at(fd, shdr[ehdr.e_shstrndx].sh_offset, shdr[ehdr.e_shstrndx].sh_size);
+    if (!strtab)
+        goto out_fd;
+
+    // Iterate over all sections
+    for(i = 0; i < ehdr.e_shnum; i++) {
+        // Check if the section name matches the cluster format
+        if (sscanf(strtab + shdr[i].sh_name, ".cluster%zu.%15s", &cluster_id, section_type) == 2 && 
+            (strcmp(section_type, "text") == 0 || strcmp(section_type, "rodata") == 0))  {
+            sec_addr = shdr[i].sh_addr;
+            
+            // If this is the first section of a new cluster, create a new SharedCluster structure
+            if (cur_id != cluster_id) {
+                cluster = g_malloc0(sizeof(SharedCluster));
+                if (!cluster)
+                    goto out_fd;
+
+                snprintf(cluster->name, sizeof(cluster->name), "cluster%zu", cluster_id);
+                cluster->size = 0;
+                cluster->gpa = (void*)sec_addr;
+                cluster->sections[0].pagenum = 0;
+                cluster->sections[1].pagenum = 0;
+                QTAILQ_INSERT_TAIL(&clusters, cluster, next);
+                shared_cluster_count++;
+
+                cur_id = cluster_id;
+            }
+
+            if (strcmp(section_type, "text") == 0)
+                section = &cluster->sections[0];
+            else
+                section = &cluster->sections[1];
+
+            // Find the segment containing the section
+            for (segment_id = 0; segment_id < ehdr.e_phnum; segment_id++) {
+                ph = &phdr[segment_id];
+                if (sec_addr >= ph->p_vaddr && sec_addr < ph->p_vaddr + ph->p_memsz)
+                    break;
+            }
+            section->segment_id = segment_id;
+            section->sec_addr = (void*)sec_addr;
+            section->pagenum = shdr[i].sh_size / 0x1000;
+
+            // Add the section size to the cluster size
+            cluster->size += shdr[i].sh_size;
+        }
+        
+    }
+
+    print_clusters();
+    ret = 0;
+
+out_fd:
+    close(fd);
+    return ret;
+}
+
+/**
+ * 这里应该不需要保护 直接调用映射接口就行? MAP_SHARED好像必须设置
+ */
+void map_cluster_memory(void *host_addr)
+{
+    SharedCluster *cluster;
+    struct kvm_shared_cluster_list cluster_list;
+    struct kvm_shared_cluster_info *cluster_info;
+    unsigned int index = 0;
+
+    printf("Begin to map %d cluster to physical memory...\n", shared_cluster_count);
+
+    cluster_list.count = shared_cluster_count;
+    cluster_list.clusters = g_malloc0(sizeof(struct kvm_shared_cluster_info) * shared_cluster_count);
+
+    QTAILQ_FOREACH(cluster, &clusters, next) {
+        cluster->hva = (void*)((uintptr_t)host_addr + (uintptr_t)cluster->gpa);;
+        printf("mmap shared_page with MAP_SHARED: %p size:%#lx\n", cluster->hva, cluster->size);
+        // 虚拟内存刚申请就进行映射 就不需要再进行内存保护了 因为中间没有被读写就不会分配物理页面
+        /* if (mmap(cluster->hva, cluster->size, 
+            PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) {
+            printf("shared_memory mmap failed\n");
+        } */
+        cluster_info = &(cluster_list.clusters[index]);
+        strcpy(cluster_info->name, cluster->name);
+        cluster_info->hva = cluster->hva;
+
+        index++;
+    }
+
+    if (kvm_map_shared_clusters(&cluster_list) < 0)
+        printf("Map cluster memory failed\n");
+    else
+        printf("Map cluster memory successful!\n");
+
+    g_free(cluster_list.clusters);
+}
+
+/*
  * Functions for reboot-persistent memory regions.
  *  - used for vga bios and option roms.
  *  - also linux kernel (-kernel / -initrd).
@@ -1134,9 +1338,28 @@ int rom_add_option(const char *file, int32_t bootindex)
     return rom_add_file(file, "genroms", 0, bootindex, true, NULL, NULL);
 }
 
+static int get_segment_number(const char *name) {
+    const char *prefix = "ELF program header segment ";
+    size_t prefix_len = strlen(prefix);
+
+    const char *segment_str = strstr(name, prefix);
+    if (segment_str != NULL && segment_str > name) {
+        const char *num_str = segment_str + prefix_len;
+        char *endptr;
+        long num = strtol(num_str, &endptr, 10);
+
+        if (endptr != num_str && *endptr == '\0') {
+            return (int)num;
+        }
+    }
+
+    return -1;
+}
+
 static void rom_reset(void *unused)
 {
     Rom *rom;
+    unsigned int segment_index;
 
     QTAILQ_FOREACH(rom, &roms, next) {
         if (rom->fw_file) {
@@ -1165,9 +1388,11 @@ static void rom_reset(void *unused)
             void *host = memory_region_get_ram_ptr(rom->mr);
             memcpy(host, rom->data, rom->datasize);
         } else {
-            if (rom->addr == 0x100000 || rom->addr == 0x124000)
+            segment_index = get_segment_number(rom->name);
+            if (section_shared(segment_index)) {
+                printf("segment %d skipped writing\n", segment_index);
                 continue;
-            printf("name:%s addr:%#lx size:%#lx\n", rom->name, rom->addr, rom->datasize);
+            }
             address_space_write_rom(rom->as, rom->addr, MEMTXATTRS_UNSPECIFIED, rom->data, rom->datasize);
         }
         if (rom->isrom) {

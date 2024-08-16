@@ -548,4 +548,20 @@ bool kvm_cpu_check_are_resettable(void);
 bool kvm_arch_cpu_check_are_resettable(void);
 
 bool kvm_dirty_ring_enabled(void);
+
+
+struct kvm_shared_cluster_info {
+    char name[256];
+    void *hva;
+};
+
+struct kvm_shared_cluster_list {
+    unsigned int count;
+    struct kvm_shared_cluster_info *clusters;
+};
+
+#define KVM_MAP_SHARED_CLUSTERS     _IOW(KVMIO,  0xe4, struct kvm_shared_cluster_list)
+
+int kvm_map_shared_clusters(struct kvm_shared_cluster_list *cluster_list);
+
 #endif
