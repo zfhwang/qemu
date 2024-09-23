@@ -1013,6 +1013,9 @@ void map_cluster_memory(void *host_addr)
     struct kvm_shared_cluster_info *cluster_info;
     unsigned int index = 0;
 
+    if (shared_cluster_count == 0)
+        return;
+
     printf("Begin to map %d cluster to physical memory...\n", shared_cluster_count);
 
     cluster_list.count = shared_cluster_count;
