@@ -988,7 +988,7 @@ int load_image_for_shared_cluster(const char *filename)
             }
             section->segment_id = segment_id;
             section->sec_addr = (void*)sec_addr;
-            section->pagenum = _N_SEGMENT_ROUND(ph->p_memsz, 0x1000) / 0x1000;
+            section->pagenum = _N_SEGMENT_ROUND(shdr[i].sh_size, 0x1000) / 0x1000;
 
             // Add the section size to the cluster size
             cluster->size += shdr[i].sh_size;
