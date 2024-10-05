@@ -2640,7 +2640,7 @@ static void qemu_init_board(void)
 {
     MachineClass *machine_class = MACHINE_GET_CLASS(current_machine);
 
-    if (load_image_for_shared_cluster(current_machine->kernel_filename)) {
+    if (share_memory && load_image_for_shared_cluster(current_machine->kernel_filename)) {
         printf("err in load_image_for_shared_cluster\n");
     }
     
@@ -3026,6 +3026,9 @@ void qemu_init(int argc, char **argv, char **envp)
             case QEMU_OPTION_version:
                 version();
                 exit(0);
+                break;
+            case QEMU_OPTION_share:
+                share_memory = 1;
                 break;
             case QEMU_OPTION_m:
                 opts = qemu_opts_parse_noisily(qemu_find_opts("memory"),

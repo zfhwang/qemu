@@ -22,6 +22,13 @@ SRST
     Display version information and exit
 ERST
 
+DEF("share", 0, QEMU_OPTION_share,
+    "-share          share memory among VMs\n", QEMU_ARCH_ALL)
+SRST
+``-share``
+    Share memory among VMs
+ERST
+
 DEF("machine", HAS_ARG, QEMU_OPTION_machine, \
     "-machine [type=]name[,prop[=value][,...]]\n"
     "                selects emulated machine ('-machine help' for list)\n"

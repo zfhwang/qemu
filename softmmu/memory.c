@@ -1566,7 +1566,7 @@ void memory_region_init_ram_flags_nomigrate(MemoryRegion *mr,
         mr->size = int128_zero();
         object_unparent(OBJECT(mr));
         error_propagate(errp, err);
-    } else if (!strcmp("pc.ram", name)) {
+    } else if (share_memory && !strcmp("pc.ram", name)) {
         map_cluster_memory(mr->ram_block->host);
     }
 }

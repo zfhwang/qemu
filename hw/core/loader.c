@@ -858,6 +858,7 @@ struct SharedCluster {
     QTAILQ_ENTRY(SharedCluster) next;
 };
 QTAILQ_HEAD(, SharedCluster) clusters = QTAILQ_HEAD_INITIALIZER(clusters);
+unsigned int share_memory = 0;
 unsigned int shared_cluster_count = 0;
 
 static void print_clusters(void) {
@@ -987,7 +988,7 @@ int load_image_for_shared_cluster(const char *filename)
             }
             section->segment_id = segment_id;
             section->sec_addr = (void*)sec_addr;
-            section->pagenum = shdr[i].sh_size / 0x1000;
+            section->pagenum = _N_SEGMENT_ROUND(ph->p_memsz, 0x1000) / 0x1000;
 
             // Add the section size to the cluster size
             cluster->size += shdr[i].sh_size;
@@ -995,6 +996,35 @@ int load_image_for_shared_cluster(const char *filename)
         
     }
 
+    // share among same unikernels
+    if (shared_cluster_count == 0) {
+        // share the first and the second segments
+        // Iterate over all segments
+        for (segment_id = 0; segment_id < 2; segment_id++) {
+            ph = &phdr[segment_id];
+
+            // If this is the first segment of a new cluster, create a new SharedCluster structure
+            if (segment_id == 0) {
+                cluster = g_malloc0(sizeof(SharedCluster));
+                if (!cluster)
+                    goto out_fd;
+
+                snprintf(cluster->name, sizeof(cluster->name), "cluster");
+                cluster->size = 0;
+                cluster->gpa = (void*)(unsigned long)ph->p_paddr;
+                QTAILQ_INSERT_TAIL(&clusters, cluster, next);
+                shared_cluster_count++;
+            }
+
+            section = &cluster->sections[segment_id];
+            section->segment_id = segment_id;
+            section->sec_addr = (void*)(unsigned long)ph->p_paddr;
+            section->pagenum = _N_SEGMENT_ROUND(ph->p_memsz, 0x1000) / 0x1000;
+
+            // Add the segment size to the cluster size
+            cluster->size += _N_SEGMENT_ROUND(ph->p_memsz, 0x1000);
+        }
+    }
     print_clusters();
     ret = 0;
 
@@ -1022,13 +1052,13 @@ void map_cluster_memory(void *host_addr)
     cluster_list.clusters = g_malloc0(sizeof(struct kvm_shared_cluster_info) * shared_cluster_count);
 
     QTAILQ_FOREACH(cluster, &clusters, next) {
-        cluster->hva = (void*)((uintptr_t)host_addr + (uintptr_t)cluster->gpa);;
+        cluster->hva = (void*)((uintptr_t)host_addr + (uintptr_t)cluster->gpa);
         printf("mmap shared_page with MAP_SHARED: %p size:%#lx\n", cluster->hva, cluster->size);
         // 虚拟内存刚申请就进行映射 就不需要再进行内存保护了 因为中间没有被读写就不会分配物理页面
-        /* if (mmap(cluster->hva, cluster->size, 
+        if (mmap(cluster->hva, cluster->size, 
             PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == MAP_FAILED) {
             printf("shared_memory mmap failed\n");
-        } */
+        }
         cluster_info = &(cluster_list.clusters[index]);
         strcpy(cluster_info->name, cluster->name);
         cluster_info->hva = cluster->hva;
